@@ -1,0 +1,100 @@
+trigger:
+- master
+
+pool:
+  vmImage: 'ubuntu-latest'
+
+stages:
+- stage: 'BuildTestAndPublish'
+  displayName: 'Build, Test and Publish'
+  jobs:
+  - job: 'BuildTestAndPublish'
+    displayName: 'Build, Test and Publish'
+    steps:
+    - task: DotNetCoreCLI@2
+      displayName: 'Build'
+      inputs:
+        command: 'build'
+        projects: '**/*.csproj'
+        arguments: '--configuration Debug'
+    - task: DotNetCoreCLI@2
+      displayName: 'Test'
+      inputs:
+        command: 'test'
+        projects: '**/*.csproj'
+        arguments: '--configuration Debug  --collect:"Code Coverage"'
+    - task: DotNetCoreCLI@2
+      displayName: 'Publish'
+      inputs:
+        command: 'publish'
+        publishWebProjects: true
+        arguments: '--configuration Debug --output $(Build.ArtifactStagingDirectory)/Website'
+    - task: CopyFiles@2
+      displayName: 'Copy ARM template'
+      inputs:
+        Contents: '**/azuredeploy*.json'
+        TargetFolder: '$(Build.ArtifactStagingDirectory)/DeploymentResources'
+        flattenFolders: true
+    - task: PublishBuildArtifacts@1
+      displayName: 'Publish Artifact: Website'
+      inputs:
+        PathtoPublish: '$(Build.ArtifactStagingDirectory)/Website'
+        ArtifactName: 'Website'
+        publishLocation: 'Container'
+    - task: PublishBuildArtifacts@1
+      displayName: 'Publish Artifact: DeploymentResources'
+      inputs:
+        PathtoPublish: '$(Build.ArtifactStagingDirectory)/DeploymentResources'
+        ArtifactName: 'DeploymentResources'
+        publishLocation: 'Container'
+
+- stage: 'Test'
+  displayName: 'Test'
+  dependsOn: 'BuildTestAndPublish'
+  condition:
+    or(
+      and(succeeded(), eq(variables['Build.SourceBranch'], 'refs/heads/master')),
+      and(succeeded(), eq(variables['Build.Reason'], 'PullRequest')))
+  jobs:
+  - deployment: 'ReleaseTest'
+    displayName: 'Deployment'
+    environment: 'Test'
+    strategy:
+      runOnce:
+        deploy:
+          steps:
+          - task: AzureResourceManagerTemplateDeployment@3
+            inputs:
+              deploymentScope: 'Resource Group'
+              azureResourceManagerConnection: 'Visual Studio Enterprise(8df9ddd2-77b9-489d-945e-f1f44e8b806c)'
+              subscriptionId: '8df9ddd2-77b9-489d-945e-f1f44e8b806c'
+              action: 'Create Or Update Resource Group'
+              resourceGroupName: 'YamlPipelineExample-test'
+              location: 'West Europe'
+              templateLocation: 'Linked artifact'
+              csmFile: '$(Pipeline.Workspace)/DeploymentResources/azuredeploy.json'
+              csmParametersFile: '$(Pipeline.Workspace)/DeploymentResources/azuredeploy-test.parameters.json'
+              deploymentMode: 'Incremental'
+          - task: AzureRmWebAppDeployment@4
+            inputs:
+              ConnectionType: 'AzureRM'
+              azureSubscription: 'Visual Studio Enterprise(8df9ddd2-77b9-489d-945e-f1f44e8b806c)'
+              appType: 'webAppLinux'
+              WebAppName: 'YamlPipelineExample-Test'
+              packageForLinux: '$(Pipeline.Workspace)/Website/*.zip'
+              RuntimeStack: 'DOTNETCORE|3.1'
+              StartupCommand: 'dotnet ExampleApp.dll'
+
+- template: deployment-template.yaml
+  parameters:
+    dependsOn: 
+    - BuildTestAndPublish
+    - Test
+    condition: |
+      or(
+        and(succeeded(), eq(variables['Build.SourceBranch'], 'refs/heads/master')),
+        and(succeeded(), eq(variables['Build.Reason'], 'PullRequest')))
+    EnvironmentName: 'Staging'
+    ArmParametersFile: 'azuredeploy-staging.parameters.json'
+    ResourceGroupName: 'YamlPipelineExample-staging'
+    WebAppName: 'YamlPipelineExample-Staging'

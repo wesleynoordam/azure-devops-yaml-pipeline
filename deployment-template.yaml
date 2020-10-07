@@ -1,0 +1,48 @@
+parameters:
+- name: dependsOn
+  type: object
+- name: condition
+  default: true
+- name: EnvironmentName
+  type: string
+- name: ResourceGroupName
+  type: string
+- name: WebAppName
+  type: string
+- name: ArmParametersFile
+  type: string
+
+stages:
+- stage: ${{ parameters.EnvironmentName }}
+  displayName: ${{ parameters.EnvironmentName }}
+  dependsOn: ${{ parameters.dependsOn }}
+  condition: ${{ parameters.condition }}
+  jobs:
+  - deployment: Release${{ parameters.EnvironmentName }}
+    environment: ${{ parameters.EnvironmentName }}
+    displayName: Deployment
+    strategy:
+      runOnce:
+        deploy:
+          steps:
+          - task: AzureResourceManagerTemplateDeployment@3
+            inputs:
+              deploymentScope: 'Resource Group'
+              azureResourceManagerConnection: 'Visual Studio Enterprise(8df9ddd2-77b9-489d-945e-f1f44e8b806c)'
+              subscriptionId: '8df9ddd2-77b9-489d-945e-f1f44e8b806c'
+              action: 'Create Or Update Resource Group'
+              resourceGroupName: '${{ parameters.ResourceGroupName }}'
+              location: 'West Europe'
+              templateLocation: 'Linked artifact'
+              csmFile: '$(Pipeline.Workspace)/DeploymentResources/azuredeploy.json'
+              csmParametersFile: '$(Pipeline.Workspace)/DeploymentResources/${{ parameters.ArmParametersFile }}'
+              deploymentMode: 'Incremental'
+          - task: AzureRmWebAppDeployment@4
+            inputs:
+              ConnectionType: 'AzureRM'
+              azureSubscription: 'Visual Studio Enterprise(8df9ddd2-77b9-489d-945e-f1f44e8b806c)'
+              appType: 'webAppLinux'
+              WebAppName: '${{ parameters.WebAppName }}'
+              packageForLinux: '$(Pipeline.Workspace)/Website/*.zip'
+              RuntimeStack: 'DOTNETCORE|3.1'
+              StartupCommand: 'dotnet ExampleApp.dll'
